@@ -1,33 +1,31 @@
 import re
 
 def get_lease_doc_pages(all_pages_text: list[str]) -> dict:
+    # Used for text-based fallback, but primarily we use image indices now
+    return {}
+
+def get_lease_image_indices(total_pages: int) -> list[int]:
     """
-    Identifies specific pages of interest within a LEASE_DOC.
-    Returns a dictionary with the page text or None for each category.
+    Since Lease Documents are scanned images without text, we send a subset 
+    of pages to Gemini to find eChallan (start), DNR stamp, and Annexure-I.
+    We grab the first 3 pages and the last 15 pages to cover these areas.
     """
-    result = {
-        "echallan_text": "",
-        "annexure_text": None,
-        "all_text": all_pages_text
-    }
-    
-    # E-Challan is typically the first 1-2 pages
-    result["echallan_text"] = "\n".join(all_pages_text[:2])
-    
-    # Detect Annexure-I using regex \bannexure\s*-\s*i\b
-    annexure_pattern = re.compile(r"\bannexure\s*-\s*i\b", re.IGNORECASE)
-    for text in all_pages_text:
-        if annexure_pattern.search(text):
-            result["annexure_text"] = text
-            break
-            
-    return result
+    indices = [0, 1, 2]
+    # Add the last 15 pages, avoiding duplicates
+    last_pages = list(range(max(3, total_pages - 15), total_pages))
+    return sorted(list(set(indices + last_pages)))
+
+def get_na_image_indices(total_pages: int) -> list[int]:
+    """
+    NA Orders typically contain relevant data on the first few pages, 
+    but they are short (1-3 pages usually). We just send all pages.
+    """
+    return list(range(total_pages))
 
 def get_na_order_pages(all_pages_text: list[str]) -> str:
     """
-    Identifies specific pages of interest within an NA_ORDER.
-    For NA_ORDER, we only care about the very first page.
+    Fallback for text-based processing.
     """
     if not all_pages_text:
         return ""
-    return all_pages_text[0]
+    return "\n".join(all_pages_text)
