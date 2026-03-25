@@ -1,8 +1,7 @@
-import re
-import os
 import json
-import ollama
+import os
 from collections import Counter
+import ollama
 from src.audit.logger import log_llm_interaction
 from config import OLLAMA_VISION_MODEL
 
@@ -11,47 +10,10 @@ try:
 except ImportError:
     pass
 
-try:
-    import pytesseract
-    OCR_AVAILABLE = True
-except ImportError:
-    OCR_AVAILABLE = False
-
-def extract_text_from_page(image):
-    if not OCR_AVAILABLE:
-        return ""
-    try:
-        return pytesseract.image_to_string(image).lower()
-    except Exception:
-        return ""
-
-def extract_dnr_candidates(text):
-    candidates = []
-    if "dnr" in text:
-        # handle split digits
-        text = text.replace(" ", "")
-        
-        # remove noise
-        cleaned = re.sub(r"[^\d\s\w]", " ", text)
-        cleaned = re.sub(r"\s+", " ", cleaned)
-        
-        # find patterns like number + year
-        matches = re.findall(r"(\d{2,5})\s*(20\d{2})", cleaned)
-        for num, year in matches:
-            if 2000 <= int(year) <= 2030:
-                candidates.append(f"{num}/{year}")
-                
-    return candidates
-
 def process_dnr_extraction(pdf_path: str) -> str:
     """
-    Extracts the lease doc number using deterministic DNR scanning.
-    Scans first 5, last 5, and some random middle pages.
-    Uses Tesseract and majority voting.
+    Extracts the lease doc number using Qwen on multiple pages.
     """
-    if not OCR_AVAILABLE:
-        print("WARNING: Tesseract not found. Will fallback to Qwen (if applicable).")
-
     try:
         from pdf2image.pdf2image import pdfinfo_from_path
         info = pdfinfo_from_path(pdf_path)
@@ -77,65 +39,84 @@ def process_dnr_extraction(pdf_path: str) -> str:
     pages_to_scan = sorted(list(pages_to_scan))
     
     filename = os.path.basename(pdf_path)
-    all_candidates = []
     
-    # Store first page image for fallback
-    first_page_image = None
-
+    import io
+    images = []
     try:
-        if OCR_AVAILABLE:
-            for page_num in pages_to_scan:
-                # We convert just the specific page to save memory
-                pages = convert_from_path(pdf_path, first_page=page_num, last_page=page_num)
-                for page in pages:
-                    if page_num == 1 and first_page_image is None:
-                        first_page_image = page
-                    
-                    text = extract_text_from_page(page)
-                    candidates = extract_dnr_candidates(text)
-                    all_candidates.extend(candidates)
-                    
-        lease_doc_no = None
-        if all_candidates:
-            lease_doc_no = Counter(all_candidates).most_common(1)[0][0]
-            log_llm_interaction(filename, "DNR_EXTRACTION", f"Pages scanned: {pages_to_scan}", str(all_candidates), {"lease_doc_no": lease_doc_no}, "success")
-            return lease_doc_no
-            
-        # Fallback to Qwen
-        if first_page_image is None:
-            # Try to grab just page 1 if not previously loaded
-            pages = convert_from_path(pdf_path, first_page=1, last_page=1)
-            first_page_image = pages[0]
-            
-        return qwen_fallback_dnr(filename, first_page_image)
-        
+        for page_num in pages_to_scan:
+            pages = convert_from_path(pdf_path, first_page=page_num, last_page=page_num)
+            for page in pages:
+                img_byte_arr = io.BytesIO()
+                page.save(img_byte_arr, format='JPEG')
+                images.append(img_byte_arr.getvalue())
+                
+        # if too many images, Qwen might struggle or run out of memory, but let's pass them all
+        # or maybe we should pass 3 images max to avoid token limit? 
+        # The prompt says: "You will be given multiple page images from the same document."
+        # We will pass up to 5 images to keep it safe.
+        max_images_to_pass = min(len(images), 5)
+        images = images[:max_images_to_pass]
+        return qwen_extract_dnr(filename, images)
     except Exception as e:
-        log_llm_interaction(filename, "DNR_EXTRACTION", f"Pages scanned: {pages_to_scan}", str(e), {}, "failed")
+        log_llm_interaction(filename, "DNR_EXTRACTION", f"Pages scanned: {pages_to_scan[:5]}", str(e), {}, "failed")
         return None
 
-def qwen_fallback_dnr(filename: str, page_image) -> str:
-    prompt = """You are extracting a document registration number (DNR stamp) from a document.
+def qwen_extract_dnr(filename: str, images: list) -> str:
+    prompt = """You are extracting the Lease Deed Document Number from scanned document pages.
 
-Find the document number which is typically in the format of NUMBER/YEAR (e.g., 56/2021).
-Return ONLY the document number.
+TASK:
+Extract the Lease Deed Document Number from the DNR stamp.
 
-OUTPUT FORMAT (STRICT JSON ONLY):
+CONTEXT:
+- The DNR stamp is a boxed structure located typically at the top-right area of the page.
+- Inside the box:
+  - The top contains the label "DNR"
+  - The bottom row contains the year (e.g., 2026)
+  - The middle row contains multiple numbers
+
+MEANING OF NUMBERS:
+- The FIRST number in the middle row is the document number (e.g., 141)
+- The bottom number is the year (e.g., 2026)
+- Other numbers (e.g., 35, 54) represent page numbering and MUST BE IGNORED
+
+OUTPUT REQUIREMENT:
+- Combine document number and year in the format:
+  <document_number>/<year>
+
+EXAMPLE:
+- If document number = 141 and year = 2026
+- Output → "141/2026"
+
+INSTRUCTIONS:
+- Use only the FIRST number from the middle row
+- Ignore any other numbers in the box
+- Do not include page numbers
+- The year must be a 4-digit number (e.g., 2025, 2026)
+- The document number is usually 2–5 digits
+
+ROBUSTNESS:
+- The same DNR stamp appears on multiple pages
+- Some pages may have OCR noise or incorrect digits
+- Identify the most consistent document number across all provided pages
+
+INPUT:
+You will be given multiple page images from the same document.
+
+OUTPUT (STRICT JSON ONLY):
 {
   "lease_doc_no": ""
-}"""
+}
 
-    import io
-    img_byte_arr = io.BytesIO()
-    page_image.save(img_byte_arr, format='JPEG')
-    img_bytes = img_byte_arr.getvalue()
-    
+First identify all candidate document numbers across pages.
+Then select the most frequent valid pair."""
+
     try:
         response = ollama.chat(
             model=OLLAMA_VISION_MODEL,
             messages=[{
                 "role": "user",
                 "content": prompt,
-                "images": [img_bytes]
+                "images": images
             }],
             format="json",
             options={"temperature": 0.0}
@@ -151,9 +132,9 @@ OUTPUT FORMAT (STRICT JSON ONLY):
         parsed = json.loads(raw_text)
         doc_no = parsed.get("lease_doc_no")
         if doc_no:
-            log_llm_interaction(filename, "DNR_EXTRACTION_FALLBACK", prompt, raw_text, {"lease_doc_no": doc_no}, "success")
+            log_llm_interaction(filename, "DNR_EXTRACTION", prompt, raw_text, {"lease_doc_no": doc_no}, "success")
             return doc_no
     except Exception as e:
-        log_llm_interaction(filename, "DNR_EXTRACTION_FALLBACK", prompt, str(e), {}, "failed")
+        log_llm_interaction(filename, "DNR_EXTRACTION", prompt, str(e), {}, "failed")
         
     return None
