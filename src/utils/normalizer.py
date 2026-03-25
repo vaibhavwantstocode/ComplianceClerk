@@ -52,32 +52,42 @@ def normalize_survey_no(survey_str: str) -> str:
     val = val.replace('/', '-')
     return val
 
+def generate_match_key(village: str, survey: str, district: str) -> str:
+    """
+    Generates a normalized composite key: Village + Survey No + District
+    """
+    v = str(village).lower().replace(" ", "").strip() if village and village != 'null' else ""
+    s = normalize_survey_no(str(survey))
+    d = str(district).lower().replace(" ", "").strip() if district and district != 'null' else ""
+    return f"{v}-{s}-{d}"
+
 def combine_and_normalize(na_data: dict, lease_data: dict) -> dict:
     """
     Takes the raw dictionaries from both extractors,
-    normalizes their fields, and returns a dictionary 
+    normalizes their fields, and returns a dictionary
     matching CombinedRecord schema.
     """
     # Safe fetch
     area_na = normalize_area(str(na_data.get('area_na', '')))
     lease_area = normalize_area(str(lease_data.get('lease_area', '')))
-    
+
     na_date = normalize_date(str(na_data.get('date', '')))
-    lease_start = normalize_date(str(lease_data.get('lease_start', '')))
+    lease_start = normalize_date(str(lease_data.get('lease_start', '')))        
+
+    # Use Lease Survey / Village if NA is empty, or vice-versa
+    survey = normalize_survey_no(str(na_data.get('survey_no') or lease_data.get('survey_no') or ''))
+    village = str(na_data.get('village') or lease_data.get('village') or '').strip()
     
-    survey = normalize_survey_no(str(na_data.get('survey_no', '')))
-    
-    village = str(na_data.get('village', '')).strip()
-    order_no = str(na_data.get('order_no', '')).strip()
+    na_order_no = str(na_data.get('na_order_no', '')).strip()
     lease_doc_no = str(lease_data.get('lease_doc_no', '')).strip()
-    
+
     return {
-        "village": village if village.lower() != 'null' else "",
-        "survey_no": survey,
-        "area_na": area_na,
-        "date": na_date,
-        "order_no": order_no if order_no.lower() != 'null' else "",
-        "lease_doc_no": lease_doc_no if lease_doc_no.lower() != 'null' else "",
-        "lease_area": lease_area,
-        "lease_start": lease_start
+        "Village": village if village.lower() != 'null' else "",
+        "Survey No.": survey,
+        "Area in NA Order": area_na,
+        "Dated": na_date,
+        "NA Order No.": na_order_no if na_order_no.lower() != 'null' else "",
+        "Lease Deed Doc. No.": lease_doc_no if lease_doc_no.lower() != 'null' else "", 
+        "Lease Area": lease_area,
+        "Lease Start": lease_start
     }

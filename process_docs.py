@@ -2,16 +2,19 @@ import os
 import json
 import time
 import fitz
+import sqlite3
 import pandas as pd
 from pathlib import Path
 
-from config import SAMPLE_PDFS_DIR, OUTPUT_DIR
+from config import SAMPLE_PDFS_DIR, OUTPUT_DIR, AUDIT_DB_PATH
 from src.utils.pdf_utils import extract_text_from_pdf, get_pdf_page_count, get_page_as_image
 from src.parsers.classifier import classify_document
 from src.parsers.page_selector import get_lease_image_indices, get_na_image_indices
 from src.extractors.lease_extractor_llm import process_lease_document_with_llm
 from src.extractors.na_extractor import process_na_order_with_llm
-from src.utils.normalizer import combine_and_normalize
+from src.extractors.dnr_extractor import process_dnr_extraction
+from src.extractors.lease_date_extractor import extract_lease_start_date
+from src.utils.normalizer import combine_and_normalize, generate_match_key
 
 def process_all_documents():
     print("Starting document processing pipeline...")
@@ -45,13 +48,22 @@ def process_all_documents():
         try:
             print(f"Extracting NA: {file.name}")
             # Single page is usually enough for NA
-            img_bytes = get_page_as_image(file, 0)
-            data = process_na_order_with_llm(file.name, img_bytes)
+            # Add caching layer to bypass free-tier rate limits!
+            conn = sqlite3.connect(AUDIT_DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("SELECT parsed FROM audit_logs WHERE doc_id=? AND status='success' ORDER BY timestamp DESC LIMIT 1", (file.name,))
+            row = cursor.fetchone()
+            conn.close()
+            
+            if row and row[0]:
+                print(f"Using cached DB parse for NA Order: {file.name}")
+                data = json.loads(row[0])
+            else:
+                img_bytes = get_page_as_image(file, 0)
+                data = process_na_order_with_llm(file.name, img_bytes)
+                
             data['_filename'] = file.name
             extracted_na_data.append(data)
-            
-            # Avoid Gemini Free Tier 429 Rate Limit
-            time.sleep(5)
         except Exception as e:
             print(f"Error processing {file.name}: {e}")
 
@@ -60,20 +72,54 @@ def process_all_documents():
     for file in lease_docs:
         try:
             print(f"Extracting Lease: {file.name}")
-            doc = fitz.open(file)
-            total_pages = len(doc)
-            indices = get_lease_image_indices(total_pages)
+            # Check DB Cache
+            conn = sqlite3.connect(AUDIT_DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("SELECT parsed FROM audit_logs WHERE doc_id=? AND status='success' ORDER BY timestamp DESC LIMIT 1", (file.name,))
+            row = cursor.fetchone()
+            conn.close()
             
-            page_imgs = {}
-            for i in indices:
-                page_imgs[f"page_{i}"] = get_page_as_image(file, i)
+            if row and row[0]:
+                print(f"Using cached DB parse for Lease Doc: {file.name}")
+                data = json.loads(row[0])
+            else:
+                doc = fitz.open(file)
+                total_pages = len(doc)
                 
-            data = process_lease_document_with_llm(file.name, page_imgs)
+                # 1. Deterministic DNR (Majority Vote) - directly via PDF path
+                lease_doc_no = process_dnr_extraction(str(file))
+                
+                # 2. Qwen logic for Annexure and Regex for e-Challan
+                indices = get_lease_image_indices(total_pages)
+                lease_start = None
+                
+                page_imgs = {}
+                # Extract images using fitz directly
+                for i in indices:
+                    img_bytes = get_page_as_image(file, i)
+                    page_imgs[f"page_{i}"] = img_bytes
+                    
+                    # Try getting lease_start from front pages if not found yet
+                    if not lease_start and i < 5:
+                        from PIL import Image
+                        import io
+                        pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+                        lease_start = extract_lease_start_date(file.name, pil_img)
+                        
+                # 3. Pass all to Qwen (It only selects the first one currently for Annexure)
+                # But since Annexure is generally at the end, we should pass only the last few pages to Qwen
+                annexure_imgs = {k: v for k, v in page_imgs.items() if int(k.split("_")[1]) > total_pages - 15}
+                
+                data = process_lease_document_with_llm(file.name, annexure_imgs)
+                
+                # Inject deterministic findings into the Lease data struct
+                if lease_doc_no:
+                    data['lease_doc_no'] = lease_doc_no
+                if lease_start:
+                    data['lease_start'] = lease_start
+                
             data['_filename'] = file.name
             extracted_lease_data.append(data)
-            
-            # Avoid Gemini Free Tier 429 Rate Limit (15 RPM)
-            time.sleep(5)
         except Exception as e:
             print(f"Error processing {file.name}: {e}")
 
@@ -90,36 +136,26 @@ def process_all_documents():
     for na_item in extracted_na_data:
         best_match = None
         
-        # We try to find the lease document that shares the survey number if possible
-        # (Though Lease extractor only pulled start, area, doc_no).
-        # Since Lease extractor only has doc_no, and NA Order doesn't have lease_doc_no,
-        # we'll use filename bridging or zip them up for demonstration.
-        
-        # Look for matching survey snippet in filename
-        survey_raw = na_item.get('survey_no', '')
-        survey_str = str(survey_raw) if survey_raw is not None else ""
-        na_survey_hint = survey_str.replace('/', '-').replace('p', '')
+        na_key = generate_match_key(na_item.get('village'), na_item.get('survey_no'), na_item.get('district'))
         
         for lease_item in extracted_lease_data:
-            normalized = combine_and_normalize(na_item, lease_item)
+            lease_key = generate_match_key(lease_item.get('village'), lease_item.get('survey_no'), lease_item.get('district'))
             
-            # Simple heuristic matching via filename text
-            if normalized['survey_no'].replace('-p', 'p') in lease_item['_filename']:
-                best_match = normalized
+            # Match strictly on Village + Survey No + District composite key
+            if na_key == lease_key and na_key != "--":
+                best_match = lease_item
                 break
                 
         if best_match:
-            matched_records.append(best_match)
+            matched_records.append(combine_and_normalize(na_item, best_match))
         else:
-            # Fallback if no explicit filename match - bind with empty lease
             matched_records.append(combine_and_normalize(na_item, {}))
 
     # 5. Export to Excel
     if matched_records:
         df = pd.DataFrame(matched_records)
-        # Select exactly the 5 fields requested in strict formatting, along with the others.
         # Required columns from prompt: doc_no, village, survey_no, area, date
-        # Our CombinedRecord: village, survey_no, area_na, date, order_no, lease_doc_no, lease_area, lease_start
+        # Our updated dict natively matches the requested 8 columns exactly
         out_path = OUTPUT_DIR / "matched_records.xlsx"
         df.to_excel(out_path, index=False)
         print(f"\nSuccessfully generated Excel output at: {out_path}")
