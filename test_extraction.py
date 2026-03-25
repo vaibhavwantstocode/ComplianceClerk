@@ -7,6 +7,7 @@ from src.utils.pdf_utils import extract_text_from_pdf, get_pdf_page_count, get_p
 from src.parsers.classifier import classify_document
 from src.extractors.lease_extractor_llm import process_lease_document_with_llm
 from src.extractors.na_extractor import process_na_order_with_llm
+from src.utils.normalizer import combine_and_normalize
 
 def test_extractors():
     print("--- Testing Extractor Pipeline ---")
@@ -41,6 +42,13 @@ def test_extractors():
         na_data = process_na_order_with_llm(na_file.name, na_image)
         print("NA Order Data Extracted:")
         print(json.dumps(na_data, indent=2))
+        
+        # 3. Test Normalization
+        print("\n--- Testing Normalization ---")
+        combined = combine_and_normalize(na_data, lease_data)
+        print("Normalized Combined Record:")
+        print(json.dumps(combined, indent=2))
+        
     except Exception as e:
          print(f"Failed NA Order test: {e}")
 
