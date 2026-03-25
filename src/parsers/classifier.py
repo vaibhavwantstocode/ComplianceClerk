@@ -1,7 +1,7 @@
 def classify_document(first_page_text: str, num_pages: int) -> str:
     """
-    Classifies a document based on its first page text and total page count.
-    Returns 'LEASE_DOC', 'NA_ORDER', or 'UNKNOWN'.
+    Classifies a document primarily based on page count since
+    most lease documents are scanned images without text layer.
     """
     text_lower = first_page_text.lower()
     
@@ -11,4 +11,6 @@ def classify_document(first_page_text: str, num_pages: int) -> str:
     if num_pages <= 5:
         return "NA_ORDER"
         
-    return "UNKNOWN"
+    # Fallback to LEASE_DOC for large scanned image PDFs
+    if num_pages > 5:
+        return "LEASE_DOC"
