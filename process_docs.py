@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import fitz
 import pandas as pd
 from pathlib import Path
@@ -48,6 +49,9 @@ def process_all_documents():
             data = process_na_order_with_llm(file.name, img_bytes)
             data['_filename'] = file.name
             extracted_na_data.append(data)
+            
+            # Avoid Gemini Free Tier 429 Rate Limit
+            time.sleep(5)
         except Exception as e:
             print(f"Error processing {file.name}: {e}")
 
@@ -67,6 +71,9 @@ def process_all_documents():
             data = process_lease_document_with_llm(file.name, page_imgs)
             data['_filename'] = file.name
             extracted_lease_data.append(data)
+            
+            # Avoid Gemini Free Tier 429 Rate Limit (15 RPM)
+            time.sleep(5)
         except Exception as e:
             print(f"Error processing {file.name}: {e}")
 
