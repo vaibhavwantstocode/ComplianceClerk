@@ -1,37 +1,7 @@
 ﻿import json
-import re
-import ollama
-from config import OLLAMA_VISION_MODEL
 from src.audit.logger import log_llm_interaction
+from src.extractors.gemini_client import run_gemini_with_retry
 from src.model.schemas import NAOrderData
-
-
-def _sanitize_strings(data: dict, keys: list[str]) -> dict:
-    cleaned = {}
-    for key in keys:
-        value = data.get(key, "")
-        cleaned[key] = str(value).strip() if value is not None else ""
-    return cleaned
-
-
-def _extract_json_dict(raw_text: str) -> dict:
-    text = raw_text or ""
-    if "```json" in text:
-        text = text.split("```json")[-1].split("```")[0].strip()
-    elif "```" in text:
-        text = text.split("```")[-1].split("```")[0].strip()
-
-    if "{" in text and "}" in text:
-        text = text[text.find("{"):text.rfind("}") + 1]
-
-    try:
-        return json.loads(text)
-    except Exception:
-        fallback = {}
-        for key in ["village", "survey_no", "district", "area_na", "date", "na_order_no"]:
-            match = re.search(rf'"{key}"\s*:\s*"([^"]*)"', text)
-            fallback[key] = match.group(1).strip() if match else ""
-        return fallback
 
 def process_na_order_with_llm(filename: str, page_image: bytes) -> dict:
     prompt = """You are extracting structured data from a government land document.
@@ -39,9 +9,10 @@ def process_na_order_with_llm(filename: str, page_image: bytes) -> dict:
 TASK:
 Extract the following fields from this document:
 
+- District
+- Taluka
 - Village
 - Survey Number (including subdivision like 251/p2)
-- District
 - Area in NA Order (total land area in sq.m)
 - Date (order date)
 - NA Order Number
@@ -49,45 +20,49 @@ Extract the following fields from this document:
 INSTRUCTIONS:
 - This is a government NA permission order
 - The document may be in Gujarati
+- All required fields are present on the FIRST PAGE
 - Extract exact values as written
 - Do not translate numbers incorrectly
 - Do not guess missing values
 
 OUTPUT FORMAT (STRICT JSON ONLY):
 {
+  "district": "",
+  "taluka": "",
   "village": "",
   "survey_no": "",
-  "district": "",
   "area_na": "",
-  "date": "",
+  "dated": "",
   "na_order_no": ""
 }"""
     
+    required_fields = ["district", "taluka", "village", "survey_no", "area_na", "dated", "na_order_no"]
+
     try:
-        response = ollama.chat(
-            model=OLLAMA_VISION_MODEL,
-            messages=[{
-                "role": "user",
-                "content": prompt,
-                "images": [page_image]
-            }],
-            format="json",
-            think=False,
-            options={"temperature": 0.0}
+        merged, primary_raw, retry_raw, unresolved = run_gemini_with_retry(
+            primary_prompt=prompt,
+            image_bytes=page_image,
+            required_fields=required_fields,
+            retry_context=prompt,
         )
 
-        raw_text = response.message.content or ""
-        if not raw_text and getattr(response.message, "thinking", None):
-            raw_text = response.message.thinking
-        parsed_json = _extract_json_dict(raw_text)
-        cleaned = _sanitize_strings(parsed_json, ["village", "survey_no", "district", "area_na", "date", "na_order_no"])
-        validated_data = NAOrderData(**cleaned)
-        
-        log_llm_interaction(filename, "NA_ORDER_EXTRACTION", prompt, raw_text, validated_data.model_dump(), "success")
+        validated_data = NAOrderData(**merged)
+
+        log_llm_interaction(filename, "NA_ORDER", prompt, primary_raw, validated_data.model_dump(), "success")
+        if retry_raw:
+            log_llm_interaction(
+                filename,
+                "NA_ORDER_RETRY",
+                prompt,
+                retry_raw,
+                {"resolved_fields": [f for f in required_fields if f not in unresolved], "unresolved_fields": unresolved},
+                "success" if not unresolved else "partial",
+            )
+
         return validated_data.model_dump()
         
     except Exception as e:
-        log_llm_interaction(filename, "NA_ORDER_EXTRACTION", prompt, str(e), {}, "failed")
+        log_llm_interaction(filename, "NA_ORDER", prompt, str(e), {}, "failed")
         return NAOrderData().model_dump()
 
 

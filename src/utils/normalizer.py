@@ -71,7 +71,7 @@ def combine_and_normalize(na_data: dict, lease_data: dict) -> dict:
     area_na = normalize_area(str(na_data.get('area_na', '')))
     lease_area = normalize_area(str(lease_data.get('lease_area', '')))
 
-    na_date = normalize_date(str(na_data.get('date', '')))
+    na_date = normalize_date(str(na_data.get('dated', '')))
     lease_start = normalize_date(str(lease_data.get('lease_start', '')))        
 
     # Use Lease Survey / Village if NA is empty, or vice-versa

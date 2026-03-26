@@ -17,10 +17,9 @@ def get_lease_image_indices(total_pages: int) -> list[int]:
 
 def get_na_image_indices(total_pages: int) -> list[int]:
     """
-    NA Orders typically contain relevant data on the first few pages, 
-    but they are short (1-3 pages usually). We just send all pages.
+    NA Orders are extracted from page 1 only by design.
     """
-    return list(range(total_pages))
+    return [0] if total_pages > 0 else []
 
 def get_na_order_pages(all_pages_text: list[str]) -> str:
     """
