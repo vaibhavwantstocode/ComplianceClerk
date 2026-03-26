@@ -3,5 +3,7 @@ __pycache__/
 *$py.class
 *.db
 .venv/
+.env
+.env.*
 src/output/*.xlsx
 output/
