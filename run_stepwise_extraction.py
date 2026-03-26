@@ -1,16 +1,12 @@
 import json
 from pathlib import Path
-import io
-from PIL import Image
 
 from config import SAMPLE_PDFS_DIR, OUTPUT_DIR
 from src.utils.pdf_utils import extract_text_from_pdf, get_pdf_page_count, get_page_as_image
 from src.parsers.classifier import classify_document
-from src.parsers.page_selector import get_lease_image_indices
+from src.extractors.annexure_detector import detect_annexure_page
 from src.extractors.na_extractor import process_na_order_with_llm
 from src.extractors.lease_extractor_llm import process_lease_document_with_llm
-from src.extractors.lease_date_extractor import extract_lease_start_date
-from src.extractors.dnr_extractor import process_dnr_extraction
 
 
 def ensure_dirs() -> dict:
@@ -39,7 +35,7 @@ def save_json(path: Path, payload: dict) -> None:
 def run_na_order(pdf_file: Path, na_dir: Path) -> dict:
     img_bytes = get_page_as_image(pdf_file, 0)
     raw = process_na_order_with_llm(pdf_file.name, img_bytes)
-    data = clean_record(raw, ["village", "survey_no", "district", "area_na", "date", "na_order_no"])
+    data = clean_record(raw, ["district", "taluka", "village", "survey_no", "area_na", "dated", "na_order_no"])
     payload = {
         "file": pdf_file.name,
         "step": "NA_ORDER",
@@ -50,78 +46,21 @@ def run_na_order(pdf_file: Path, na_dir: Path) -> dict:
 
 
 def run_lease_steps(pdf_file: Path, lease_dir: Path) -> dict:
-    total_pages = get_pdf_page_count(pdf_file)
+    detect_meta = detect_annexure_page(str(pdf_file))
+    annexure_page = int(detect_meta.get("page_index", 0))
+    annexure_img = get_page_as_image(pdf_file, annexure_page)
 
-    # Step A: Annexure-I
-    indices = get_lease_image_indices(total_pages)
-    annexure_imgs = {}
-    for i in indices:
-        if i >= total_pages:
-            continue
-        if i >= max(0, total_pages - 15):
-            annexure_imgs[f"page_{i}"] = get_page_as_image(pdf_file, i)
-
-    annexure_raw = process_lease_document_with_llm(pdf_file.name, annexure_imgs)
-    annexure_data = clean_record(annexure_raw, ["village", "survey_no", "district", "lease_area"])
-    annexure_payload = {
+    lease_raw = process_lease_document_with_llm(pdf_file.name, annexure_img)
+    lease_data = clean_record(lease_raw, ["district", "taluka", "village", "survey_no", "lease_area", "lease_doc_no", "lease_start"])
+    lease_payload = {
         "file": pdf_file.name,
-        "step": "LEASE_ANNEXURE",
-        "data": annexure_data,
+        "step": "LEASE_DOC",
+        "annexure_detection": detect_meta,
+        "data": lease_data,
     }
-    save_json(lease_dir / f"{pdf_file.stem}.annexure.json", annexure_payload)
+    save_json(lease_dir / f"{pdf_file.stem}.lease.json", lease_payload)
 
-    # Step B: Lease Start (e-Challan)
-    lease_start = ""
-    max_scan = min(total_pages, 8)
-    for i in range(max_scan):
-        page_bytes = get_page_as_image(pdf_file, i)
-        pil_img = Image.open(io.BytesIO(page_bytes)).convert("RGB")
-        candidate = extract_lease_start_date(pdf_file.name, pil_img)
-        if candidate:
-            lease_start = candidate
-            break
-
-    lease_start_payload = {
-        "file": pdf_file.name,
-        "step": "LEASE_START",
-        "data": {
-            "lease_start": lease_start,
-        },
-    }
-    save_json(lease_dir / f"{pdf_file.stem}.lease_start.json", lease_start_payload)
-
-    # Step C: DNR / Lease Doc Number
-    lease_doc_no = process_dnr_extraction(str(pdf_file))
-    dnr_payload = {
-        "file": pdf_file.name,
-        "step": "LEASE_DNR",
-        "data": {
-            "lease_doc_no": str(lease_doc_no).strip() if lease_doc_no else "",
-        },
-    }
-    save_json(lease_dir / f"{pdf_file.stem}.dnr.json", dnr_payload)
-
-    # Combined lease output from stepwise extraction
-    merged_payload = {
-        "file": pdf_file.name,
-        "step": "LEASE_COMBINED",
-        "data": {
-            "village": annexure_data.get("village", ""),
-            "survey_no": annexure_data.get("survey_no", ""),
-            "district": annexure_data.get("district", ""),
-            "lease_area": annexure_data.get("lease_area", ""),
-            "lease_start": lease_start,
-            "lease_doc_no": dnr_payload["data"]["lease_doc_no"],
-        },
-    }
-    save_json(lease_dir / f"{pdf_file.stem}.combined.json", merged_payload)
-
-    return {
-        "annexure": annexure_payload,
-        "lease_start": lease_start_payload,
-        "dnr": dnr_payload,
-        "combined": merged_payload,
-    }
+    return lease_payload
 
 
 def main() -> None:
