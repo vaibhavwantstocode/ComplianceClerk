@@ -55,7 +55,7 @@ def process_all_documents():
     stepwise_na_dir = stepwise_base / "na_orders"
     stepwise_lease_dir = stepwise_base / "lease_docs"
 
-    # 2. Extract Data from NA Orders (Gemini call #1 per pair)
+    # 2. Extract Data from NA Orders (Qwen call #1 per pair)
     print("\n--- Processing NA Orders ---")
     for file in na_orders:
         try:
@@ -72,7 +72,7 @@ def process_all_documents():
         except Exception as e:
             print(f"Error processing {file.name}: {e}")
 
-    # 3. Extract Data from Lease Documents (Gemini call #2 per pair)
+    # 3. Extract Data from Lease Documents (Qwen call #2 per pair)
     print("\n--- Processing Lease Documents ---")
     for file in lease_docs:
         try:

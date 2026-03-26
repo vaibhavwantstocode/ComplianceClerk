@@ -72,7 +72,7 @@ def main() -> int:
         with fitz.open(pdf_path) as doc:
             total = len(doc)
             start_idx = 29
-            end_idx = 37
+            end_idx = 39
 
             if total <= start_idx:
                 print(json.dumps({"ok": False, "annexure_page_index": -1, "error": "Document has fewer than 30 pages."}))
@@ -96,13 +96,13 @@ def main() -> int:
                                 "annexure_page_index": i,
                                 "page_index": i,
                                 "confidence": 1.0,
-                                "method": "paddleocr_py310_top25_range30_38",
+                                "method": "paddleocr_py310_top25_range30_40",
                             }
                         )
                     )
                     return 0
 
-            print(json.dumps({"ok": False, "annexure_page_index": -1, "error": "Annexure-I not found in pages 30-38 top 25%."}))
+            print(json.dumps({"ok": False, "annexure_page_index": -1, "error": "Annexure-I not found in pages 30-40 top 25%."}))
         return 0
     except Exception as exc:
         print(json.dumps({"ok": False, "annexure_page_index": -1, "error": str(exc)}))

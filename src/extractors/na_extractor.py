@@ -1,6 +1,6 @@
 ﻿import json
 from src.audit.logger import log_llm_interaction
-from src.extractors.gemini_client import run_gemini_with_retry
+from src.extractors.qwen_client import run_qwen_with_retry
 from src.model.schemas import NAOrderData
 
 def process_na_order_with_llm(filename: str, page_image: bytes) -> dict:
@@ -39,7 +39,7 @@ OUTPUT FORMAT (STRICT JSON ONLY):
     required_fields = ["district", "taluka", "village", "survey_no", "area_na", "dated", "na_order_no"]
 
     try:
-        merged, primary_raw, retry_raw, unresolved = run_gemini_with_retry(
+        merged, primary_raw, retry_raw, unresolved = run_qwen_with_retry(
             primary_prompt=prompt,
             image_bytes=page_image,
             required_fields=required_fields,

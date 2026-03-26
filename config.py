@@ -15,8 +15,13 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_API_KEY_ENV = "GEMINI_API_KEY"
 
-# Backward-compatible legacy model constant used by deprecated modules.
-OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "qwen3-vl:4b")
+# Qwen / Ollama API configuration
+QWEN_VISION_MODEL = os.getenv("QWEN_VISION_MODEL", "qwen3-vl:4b")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_API_KEY_ENV = "OLLAMA_API_KEY"
+
+# Backward-compatible constant name.
+OLLAMA_VISION_MODEL = QWEN_VISION_MODEL
 
 # Python 3.10 command used for PaddleOCR Annexure-I detection subprocess.
 # Examples:

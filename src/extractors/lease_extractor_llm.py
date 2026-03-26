@@ -1,6 +1,6 @@
 ﻿import json
 from src.audit.logger import log_llm_interaction
-from src.extractors.gemini_client import run_gemini_with_retry
+from src.extractors.qwen_client import run_qwen_with_retry
 from src.model.schemas import LeaseDocData
 
 
@@ -100,7 +100,7 @@ OUTPUT FORMAT (STRICT JSON ONLY):
     ]
 
     try:
-        merged, primary_raw, retry_raw, unresolved = run_gemini_with_retry(
+        merged, primary_raw, retry_raw, unresolved = run_qwen_with_retry(
             primary_prompt=prompt,
             image_bytes=annexure_page_image,
             required_fields=required_fields,

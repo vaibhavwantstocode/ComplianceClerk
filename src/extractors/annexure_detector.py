@@ -14,13 +14,13 @@ def _scan_text_layer_for_annexure(pdf_path: str) -> dict:
     with fitz.open(pdf_path) as doc:
         total = len(doc)
         start_idx = 29
-        end_idx = min(37, total - 1)
+        end_idx = min(39, total - 1)
         if total <= start_idx:
             return {
                 "annexure_page_index": -1,
                 "page_index": max(0, total - 1),
                 "confidence": 0.0,
-                "method": "text-layer-range30_38",
+                "method": "text-layer-range30_40",
                 "ok": False,
                 "error": "Document has fewer than 30 pages.",
             }
@@ -33,7 +33,7 @@ def _scan_text_layer_for_annexure(pdf_path: str) -> dict:
                     "annexure_page_index": i,
                     "page_index": i,
                     "confidence": 0.85,
-                    "method": "text-layer-range30_38",
+                    "method": "text-layer-range30_40",
                     "ok": True,
                 }
 
@@ -41,9 +41,9 @@ def _scan_text_layer_for_annexure(pdf_path: str) -> dict:
             "annexure_page_index": -1,
             "page_index": end_idx,
             "confidence": 0.0,
-            "method": "text-layer-range30_38",
+            "method": "text-layer-range30_40",
             "ok": False,
-            "error": "Annexure-I not found in pages 30-38.",
+            "error": "Annexure-I not found in pages 30-40.",
         }
 
 
