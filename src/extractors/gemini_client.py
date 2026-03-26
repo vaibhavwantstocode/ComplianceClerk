@@ -47,9 +47,10 @@ def _missing_fields(data: dict, required_fields: Iterable[str]) -> list[str]:
 
 
 def _gemini_generate(prompt: str, image_bytes: bytes) -> str:
-    api_key = __import__("os").getenv(GEMINI_API_KEY_ENV, "").strip()
+    os_mod = __import__("os")
+    api_key = os_mod.getenv(GEMINI_API_KEY_ENV, "").strip() or os_mod.getenv("GOOGLE_API_KEY", "").strip()
     if not api_key:
-        raise RuntimeError(f"Missing {GEMINI_API_KEY_ENV} environment variable.")
+        raise RuntimeError(f"Missing {GEMINI_API_KEY_ENV} (or GOOGLE_API_KEY) environment variable.")
 
     endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={api_key}"
 

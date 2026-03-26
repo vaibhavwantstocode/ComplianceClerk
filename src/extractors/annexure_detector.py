@@ -34,9 +34,13 @@ def _scan_text_layer_for_annexure(pdf_path: str) -> dict:
 def detect_annexure_page(pdf_path: str) -> dict:
     script_path = Path(__file__).parent / "annexure_detector_py310.py"
     cmd = shlex.split(ANNEXURE_PY310_COMMAND) + [str(script_path), str(pdf_path)]
+    proc_env = dict(__import__("os").environ)
+    proc_env.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
+    proc_env.setdefault("FLAGS_use_mkldnn", "0")
+    proc_env.setdefault("FLAGS_enable_pir_api", "0")
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=180)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=180, env=proc_env)
         if result.returncode == 0:
             payload = json.loads(result.stdout.strip() or "{}")
             if payload.get("ok") and isinstance(payload.get("page_index"), int):

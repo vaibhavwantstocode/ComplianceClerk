@@ -6,6 +6,46 @@ import fitz
 import numpy as np
 
 
+def _collect_lines_from_legacy_ocr(result) -> list[str]:
+    lines = []
+    if result and isinstance(result, list) and result[0]:
+        for row in result[0]:
+            if len(row) >= 2 and isinstance(row[1], (list, tuple)) and row[1]:
+                lines.append(str(row[1][0]))
+    return lines
+
+
+def _collect_lines_from_predict(result) -> list[str]:
+    lines = []
+    if not result:
+        return lines
+
+    for item in result:
+        if isinstance(item, dict):
+            rec_texts = item.get("rec_texts")
+            if isinstance(rec_texts, list):
+                lines.extend([str(x) for x in rec_texts if x])
+
+    if not lines:
+        # Last-resort parsing for unknown structures.
+        text_blob = str(result)
+        import re as _re
+        for match in _re.findall(r"'rec_texts':\s*\[(.*?)\]", text_blob):
+            for token in match.split(","):
+                token = token.strip().strip("'\"")
+                if token:
+                    lines.append(token)
+    return lines
+
+
+def _run_ocr_lines(ocr, img) -> list[str]:
+    try:
+        return _collect_lines_from_legacy_ocr(ocr.ocr(img, cls=True))
+    except TypeError:
+        # PaddleOCR v3: use predict API
+        return _collect_lines_from_predict(ocr.predict(img))
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print(json.dumps({"ok": False, "error": "Missing pdf path argument."}))
@@ -28,12 +68,7 @@ def main() -> int:
             for i, page in enumerate(doc):
                 pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
                 img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
-                result = ocr.ocr(img, cls=True)
-                lines = []
-                if result and result[0]:
-                    for row in result[0]:
-                        if len(row) >= 2 and isinstance(row[1], (list, tuple)):
-                            lines.append(str(row[1][0]))
+                lines = _run_ocr_lines(ocr, img)
 
                 text = " ".join(lines)
                 if pattern.search(text):
