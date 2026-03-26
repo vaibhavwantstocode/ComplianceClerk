@@ -1,0 +1,16 @@
+{
+  "file": "Rampura Mota S.No.-255 Lease Deed No.-838.pdf.pdf",
+  "step": "LEASE_PADDLE_EXTRACTION",
+  "annexure_page_index": 35,
+  "ok": true,
+  "error": "",
+  "data": {
+    "village": "",
+    "survey_no": "59/P3",
+    "district": "",
+    "taluka": "",
+    "area": "",
+    "lease_deed_no": "",
+    "date": "28-05-2023"
+  }
+}

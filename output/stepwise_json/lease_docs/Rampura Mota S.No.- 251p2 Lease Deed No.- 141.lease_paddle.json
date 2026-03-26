@@ -1,0 +1,16 @@
+{
+  "file": "Rampura Mota S.No.- 251p2 Lease Deed No.- 141.pdf",
+  "step": "LEASE_PADDLE_EXTRACTION",
+  "annexure_page_index": 35,
+  "ok": true,
+  "error": "",
+  "data": {
+    "village": "",
+    "survey_no": "54",
+    "district": "",
+    "taluka": "",
+    "area": "",
+    "lease_deed_no": "",
+    "date": ""
+  }
+}

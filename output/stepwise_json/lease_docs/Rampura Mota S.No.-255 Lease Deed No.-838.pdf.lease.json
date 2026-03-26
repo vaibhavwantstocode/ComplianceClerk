@@ -1,0 +1,20 @@
+{
+  "file": "Rampura Mota S.No.-255 Lease Deed No.-838.pdf.pdf",
+  "step": "LEASE_DOC",
+  "annexure_detection": {
+    "ok": true,
+    "annexure_page_index": 34,
+    "page_index": 34,
+    "confidence": 1.0,
+    "method": "paddleocr_py310_top25_range30_40"
+  },
+  "data": {
+    "district": "Banaskantha",
+    "taluka": "Dhanera",
+    "village": "Rampura Mota",
+    "survey_no": "255",
+    "lease_area": "16888",
+    "lease_doc_no": "838/2025",
+    "lease_start": "28/05/2023"
+  }
+}
