@@ -46,6 +46,12 @@ def _run_ocr_lines(ocr, img) -> list[str]:
         return _collect_lines_from_predict(ocr.predict(img))
 
 
+def _crop_top_quarter(img: np.ndarray) -> np.ndarray:
+    height = img.shape[0]
+    top = max(1, int(height * 0.25))
+    return img[:top, :, :]
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print(json.dumps({"ok": False, "error": "Missing pdf path argument."}))
@@ -59,36 +65,47 @@ def main() -> int:
         print(json.dumps({"ok": False, "error": f"PaddleOCR import failed: {exc}"}))
         return 0
 
-    pattern = re.compile(r"annexure\s*[-:]?\s*i\b", re.IGNORECASE)
+    pattern = re.compile(r"annexure\s*[-–]?\s*i", re.IGNORECASE)
 
     try:
         ocr = PaddleOCR(use_angle_cls=True, lang="en")
         with fitz.open(pdf_path) as doc:
-            best = None
-            for i, page in enumerate(doc):
+            total = len(doc)
+            start_idx = 29
+            end_idx = 37
+
+            if total <= start_idx:
+                print(json.dumps({"ok": False, "annexure_page_index": -1, "error": "Document has fewer than 30 pages."}))
+                return 0
+
+            end_idx = min(end_idx, total - 1)
+
+            for i in range(start_idx, end_idx + 1):
+                page = doc[i]
                 pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
                 img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
-                lines = _run_ocr_lines(ocr, img)
+                top_img = _crop_top_quarter(img)
+                lines = _run_ocr_lines(ocr, top_img)
 
-                text = " ".join(lines)
+                text = " ".join(lines).lower()
                 if pattern.search(text):
-                    score = sum(1 for line in lines if "annexure" in line.lower())
-                    candidate = {
-                        "ok": True,
-                        "page_index": i,
-                        "confidence": float(score if score > 0 else 1),
-                        "method": "paddleocr_py310",
-                    }
-                    if not best or candidate["confidence"] > best["confidence"]:
-                        best = candidate
+                    print(
+                        json.dumps(
+                            {
+                                "ok": True,
+                                "annexure_page_index": i,
+                                "page_index": i,
+                                "confidence": 1.0,
+                                "method": "paddleocr_py310_top25_range30_38",
+                            }
+                        )
+                    )
+                    return 0
 
-            if best:
-                print(json.dumps(best))
-            else:
-                print(json.dumps({"ok": False, "error": "Annexure-I not found by PaddleOCR."}))
+            print(json.dumps({"ok": False, "annexure_page_index": -1, "error": "Annexure-I not found in pages 30-38 top 25%."}))
         return 0
     except Exception as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}))
+        print(json.dumps({"ok": False, "annexure_page_index": -1, "error": str(exc)}))
         return 0
 
 

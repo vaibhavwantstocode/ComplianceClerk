@@ -10,25 +10,56 @@ from config import ANNEXURE_PY310_COMMAND
 
 
 def _scan_text_layer_for_annexure(pdf_path: str) -> dict:
-    pattern = re.compile(r"annexure\s*[-:]?\s*i\b", re.IGNORECASE)
+    pattern = re.compile(r"annexure\s*[-–]?\s*i", re.IGNORECASE)
     with fitz.open(pdf_path) as doc:
-        for i, page in enumerate(doc):
+        total = len(doc)
+        start_idx = 29
+        end_idx = min(37, total - 1)
+        if total <= start_idx:
+            return {
+                "annexure_page_index": -1,
+                "page_index": max(0, total - 1),
+                "confidence": 0.0,
+                "method": "text-layer-range30_38",
+                "ok": False,
+                "error": "Document has fewer than 30 pages.",
+            }
+
+        for i in range(start_idx, end_idx + 1):
+            page = doc[i]
             text = page.get_text("text") or ""
             if pattern.search(text):
                 return {
+                    "annexure_page_index": i,
                     "page_index": i,
                     "confidence": 0.85,
-                    "method": "text-layer-fallback",
+                    "method": "text-layer-range30_38",
                     "ok": True,
                 }
 
         return {
-            "page_index": max(0, len(doc) - 1),
-            "confidence": 0.1,
-            "method": "last-page-fallback",
+            "annexure_page_index": -1,
+            "page_index": end_idx,
+            "confidence": 0.0,
+            "method": "text-layer-range30_38",
             "ok": False,
-            "error": "Annexure-I not found; defaulted to last page.",
+            "error": "Annexure-I not found in pages 30-38.",
         }
+
+
+def _extract_json_from_stdout(stdout_text: str) -> dict:
+    text = stdout_text or ""
+    matches = re.findall(r"\{[\s\S]*?\}", text)
+    if not matches:
+        return {}
+    for candidate in reversed(matches):
+        try:
+            payload = json.loads(candidate)
+            if isinstance(payload, dict):
+                return payload
+        except Exception:
+            continue
+    return {}
 
 
 def detect_annexure_page(pdf_path: str) -> dict:
@@ -42,8 +73,9 @@ def detect_annexure_page(pdf_path: str) -> dict:
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=180, env=proc_env)
         if result.returncode == 0:
-            payload = json.loads(result.stdout.strip() or "{}")
-            if payload.get("ok") and isinstance(payload.get("page_index"), int):
+            payload = _extract_json_from_stdout(result.stdout)
+            if payload.get("ok") and isinstance(payload.get("annexure_page_index"), int):
+                payload.setdefault("page_index", payload.get("annexure_page_index"))
                 return payload
 
             fallback = _scan_text_layer_for_annexure(pdf_path)
