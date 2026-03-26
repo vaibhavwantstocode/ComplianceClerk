@@ -63,12 +63,14 @@ def normalize_area(area_str: str) -> str:
     """
     if not area_str or area_str.lower() == 'null':
         return ""
+
+    cleaned = area_str.replace(",", "")
         
     # Extract just the float/integer part
-    m = re.search(r'([\d\.]+)', area_str)
+    m = re.search(r'([\d\.]+)', cleaned)
     if m:
         return m.group(1)
-    return area_str.strip()
+    return cleaned.strip()
     
 def normalize_survey_no(survey_str: str) -> str:
     """
