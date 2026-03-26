@@ -1,76 +1,139 @@
-# 🧾 Land Document Linking Pipeline (End-to-End)
+# ComplianceClerk
 
-## 🎯 Objective
-Process a pair of documents:
-* **Lease Deed + e-Challan (40–50 pages)**
-* **NA Permission Order (2 pages, Gujarati)**
+ComplianceClerk processes land records from mixed PDF sets and generates matched output between:
 
-Extract required fields and generate a structured **Excel output** with strict matching.
+- NA permission orders (short PDFs)
+- Lease deed bundles (long PDFs with Annexure content)
 
----
+The pipeline combines deterministic page selection with OpenAI vision extraction, then performs strict matching and exports normalized output.
 
-## 🔥 STEP 0: INPUT
+## What The Pipeline Does
+
+1. Scans PDFs from `data/sample_pdfs`.
+2. Classifies each file as `NA_ORDER` or `LEASE_DOC`.
+3. For NA orders:
+- Uses only page 1.
+- Sends page image to OpenAI (`gpt-4o`) with a strict JSON prompt.
+4. For lease documents:
+- Detects Annexure page deterministically using PaddleOCR (Python 3.10 subprocess).
+- Sends only detected Annexure page to OpenAI with strict JSON prompt.
+5. Validates extracted payloads via Pydantic schemas.
+6. Logs prompt/response/parsed results to SQLite audit database.
+7. Performs strict matching and exports Excel.
+
+## Key Design Choices
+
+- Deterministic page routing first, LLM extraction second.
+- Two-call architecture for matched pairs:
+  - NA page 1 extraction
+  - Lease Annexure page extraction
+- Field-level retry when required fields are missing.
+- Fallback to empty-string fields instead of null values.
+
+## Current Provider Configuration
+
+- Provider: OpenAI Chat Completions API
+- Model default: `gpt-4o`
+- Config is read from `.env` automatically at startup.
+
+Required environment variable in `.env`:
+
+```env
+OPENAI_API_KEY=your_api_key_here
+```
+
+Optional overrides:
+
+```env
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_VISION_MODEL=gpt-4o
+ANNEXURE_PY310_COMMAND=py -3.10
+```
+
+## Folder Structure
+
 ```text
-Input: Two PDFs (unordered)
-- One large document → Lease + e-Challan
-- One small document → NA Order
+ComplianceClerk/
+├─ config.py
+├─ process_docs.py
+├─ run_na_only.py
+├─ readme.md
+├─ data/
+│  └─ sample_pdfs/
+├─ output/
+│  ├─ matched_records.xlsx
+│  └─ stepwise_json/
+│     ├─ na_orders/
+│     └─ lease_docs/
+├─ src/
+│  ├─ audit/
+│  │  └─ logger.py
+│  ├─ extractors/
+│  │  ├─ openai_client.py
+│  │  ├─ na_extractor.py
+│  │  ├─ lease_extractor_llm.py
+│  │  ├─ annexure_detector.py
+│  │  └─ annexure_detector_py310.py
+│  ├─ model/
+│  │  └─ schemas.py
+│  ├─ parsers/
+│  │  └─ classifier.py
+│  └─ utils/
+│     ├─ normalizer.py
+│     └─ pdf_utils.py
+└─ audit.db
 ```
 
----
+## How To Run
 
-## 🧠 STEP 1: DOCUMENT CLASSIFICATION
-### Goal
-Classify each PDF into `LEASE_DOC` or `NA_ORDER` using a header-based heuristic.
+### 1. Install dependencies
 
-### Rules
-```python
-def classify_doc(text, num_pages):
-    if 'challan' in text.lower() or 'lease deed' in text.lower():
-        return 'LEASE_DOC'
-    if num_pages <= 5:
-        return 'NA_ORDER'
-    return 'UNKNOWN'
+Use your project virtual environment and install required packages used by the repository.
+
+### 2. Prepare input PDFs
+
+Place files in `data/sample_pdfs/`.
+
+### 3. Configure API key
+
+Create or update `.env` in project root with `OPENAI_API_KEY`.
+
+### 4. Run full pipeline
+
+```bash
+python process_docs.py
 ```
 
----
+Outputs:
 
-## 🔍 STEP 2: PAGE IDENTIFICATION
-### 📄 LEASE_DOC
-1. **e-Challan Pages (Page 1–2):** Used for **Lease Start**
-2. **Annexure-I Page:** Used for **Lease Area + matching fields**. Detected using regex `\bannexure\s*-\s*i\b`
-3. **All Pages:** Used for **DNR stamp extraction (Doc No)**
+- `output/matched_records.xlsx`
+- `output/stepwise_json/na_orders/*.json`
+- `output/stepwise_json/lease_docs/*.json`
 
-### 📄 NA_ORDER
-* Use **Page 1 only** (Contains all required fields).
+### 5. Run NA-only refresh
 
----
+Use this when you only want to regenerate NA extraction JSON after prompt refinement.
 
-## 📊 STEP 3: FIELD EXTRACTION & 🤖 STEP 6: LLM INTEGRATION
+```bash
+python run_na_only.py
+```
 
-### 📄 FROM NA_ORDER (via Gemini 3 Flash Vision API)
-Instead of traditional OCR (Tesseract), Page 1 is converted to an image and passed directly to Gemini 3 Flash.
-* **Fields:** Village, Survey No. (with subdivision), Area in NA Order, Dated, NA Order No., District, Taluka.
+## Audit Logging
 
-### 📄 FROM LEASE_DOC (Deterministic/Regex)
-* **Lease Start:** e-Challan pages `r'printed on[:\s]*([\d/:-]+)'`
-* **Lease Area:** Annexure-I table `Area (SQM)`
-* **Doc No:** Multi-page DNR stamp extraction with majority voting.
+Audit records are written to `audit.db` table `audit_logs` with:
 
----
+- `doc_id`
+- `step`
+- `prompt`
+- `response`
+- `parsed`
+- `status`
+- `timestamp`
 
-## 🔧 STEP 4: NORMALIZATION & 🔗 STEP 5: STRICT MATCHING
-* **Survey Format:** `251/p2` → `251-p2`
-* **Text:** Lowercase, remove punctuation, trim spaces.
-* **Dates:** Convert to DD/MM/YYYY.
-* **Strict Match Rule:** District + Taluka + Village + Survey + Subdivision MUST all match between the two documents.
+This makes extraction decisions traceable and easy to debug.
 
----
+## Notes
 
-## 🛡️ STEP 7: SCHEMA VALIDATION & 🧾 STEP 8: AUDIT LOG
-* **Validation:** Enforce output strictly via Pydantic (parse → validate → retry → fallback null).
-* **Audit Trail:** Every single LLM prompt, image reference, and response is logged atomically to a local SQLite database for debugging.
-
----
-
-## 📄 STEP 9: XLSX OUTPUT
-Structured 8-column Excel output generated via `pandas`.
+- `.env` is ignored by git for secret safety.
+- `output/` is ignored by git by design.
+- NA prompt currently enforces English village output and heading-based NA order number extraction.
