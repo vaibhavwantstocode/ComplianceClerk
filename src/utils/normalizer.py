@@ -1,6 +1,36 @@
 import re
 from src.model.schemas import NAOrderData, LeaseDocData, CombinedRecord
 
+
+def _extract_doc_year(lease_doc_no: str) -> str:
+    text = (lease_doc_no or "").strip()
+    m = re.search(r'/(\d{4})$', text)
+    return m.group(1) if m else ""
+
+
+def _align_lease_start_year(lease_start: str, lease_doc_no: str) -> str:
+    """
+    Align Lease Start year with Lease Deed Doc No year when mismatch occurs.
+    Example: lease_doc_no=838/2025 and lease_start=28/05/2023 -> 28/05/2025
+    """
+    start = normalize_date(lease_start)
+    if not start:
+        return ""
+
+    doc_year = _extract_doc_year(lease_doc_no)
+    if not doc_year:
+        return start
+
+    m = re.search(r'(\d{1,2})/(\d{1,2})/(\d{4})', start)
+    if not m:
+        return start
+
+    day, month, year = m.groups()
+    if year == doc_year:
+        return f"{int(day):02d}/{int(month):02d}/{year}"
+
+    return f"{int(day):02d}/{int(month):02d}/{doc_year}"
+
 def normalize_date(date_str: str) -> str:
     """
     Normalizes date to DD/MM/YYYY.
@@ -72,7 +102,7 @@ def combine_and_normalize(na_data: dict, lease_data: dict) -> dict:
     lease_area = normalize_area(str(lease_data.get('lease_area', '')))
 
     na_date = normalize_date(str(na_data.get('dated', '')))
-    lease_start = normalize_date(str(lease_data.get('lease_start', '')))        
+    lease_start = normalize_date(str(lease_data.get('lease_start', '')))
 
     # Use Lease Survey / Village if NA is empty, or vice-versa
     survey = normalize_survey_no(str(na_data.get('survey_no') or lease_data.get('survey_no') or ''))
@@ -80,6 +110,7 @@ def combine_and_normalize(na_data: dict, lease_data: dict) -> dict:
     
     na_order_no = str(na_data.get('na_order_no', '')).strip()
     lease_doc_no = str(lease_data.get('lease_doc_no', '')).strip()
+    lease_start = _align_lease_start_year(lease_start, lease_doc_no)
 
     return {
         "Village": village if village.lower() != 'null' else "",

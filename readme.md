@@ -29,6 +29,7 @@ The pipeline combines deterministic page selection with OpenAI vision extraction
   - Lease Annexure page extraction
 - Field-level retry when required fields are missing.
 - Fallback to empty-string fields instead of null values.
+- Lease date guardrail: when `Lease Start` year mismatches the year in `Lease Deed Doc. No.` (value after `/`), the pipeline keeps day/month and corrects the year from `Lease Deed Doc. No.`.
 
 ## Current Provider Configuration
 
@@ -109,6 +110,18 @@ Outputs:
 - `output/matched_records.xlsx`
 - `output/stepwise_json/na_orders/*.json`
 - `output/stepwise_json/lease_docs/*.json`
+
+### 4b. Build merged Excel directly from stepwise JSON
+
+If you need a direct merge from generated JSON files:
+
+```bash
+python merge_stepwise_json_to_excel.py
+```
+
+Output:
+
+- `output/output.xlsx`
 
 ### 5. Run NA-only refresh
 
