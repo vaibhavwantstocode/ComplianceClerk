@@ -2,9 +2,7 @@ __pycache__/
 **/__pycache__/
 *.py[cod]
 *$py.class
-*.db
 .venv/
 .env
 .env.*
 src/output/*.xlsx
-output/
