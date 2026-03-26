@@ -1,28 +1,18 @@
 import json
 import os
-from collections import Counter
+import re
+import io
 import ollama
+import fitz
 from src.audit.logger import log_llm_interaction
 from config import OLLAMA_VISION_MODEL
-
-try:
-    from pdf2image import convert_from_path
-except ImportError:
-    pass
 
 def process_dnr_extraction(pdf_path: str) -> str:
     """
     Extracts the lease doc number using Qwen on multiple pages.
     """
-    try:
-        from pdf2image.pdf2image import pdfinfo_from_path
-        info = pdfinfo_from_path(pdf_path)
-        total_pages = int(info["Pages"])
-    except Exception:
-        # Fallback if pdfinfo fails
-        import fitz
-        with fitz.open(pdf_path) as doc:
-            total_pages = len(doc)
+    with fitz.open(pdf_path) as doc:
+        total_pages = len(doc)
             
     # Page selection logic (1-indexed for pdf2image)
     pages_to_scan = set()
@@ -40,15 +30,16 @@ def process_dnr_extraction(pdf_path: str) -> str:
     
     filename = os.path.basename(pdf_path)
     
-    import io
     images = []
     try:
-        for page_num in pages_to_scan:
-            pages = convert_from_path(pdf_path, first_page=page_num, last_page=page_num)
-            for page in pages:
-                img_byte_arr = io.BytesIO()
-                page.save(img_byte_arr, format='JPEG')
-                images.append(img_byte_arr.getvalue())
+        with fitz.open(pdf_path) as doc:
+            for page_num in pages_to_scan:
+                idx = page_num - 1
+                if idx < 0 or idx >= len(doc):
+                    continue
+                page = doc[idx]
+                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                images.append(pix.tobytes("png"))
                 
         # if too many images, Qwen might struggle or run out of memory, but let's pass them all
         # or maybe we should pass 3 images max to avoid token limit? 
@@ -59,7 +50,7 @@ def process_dnr_extraction(pdf_path: str) -> str:
         return qwen_extract_dnr(filename, images)
     except Exception as e:
         log_llm_interaction(filename, "DNR_EXTRACTION", f"Pages scanned: {pages_to_scan[:5]}", str(e), {}, "failed")
-        return None
+        return ""
 
 def qwen_extract_dnr(filename: str, images: list) -> str:
     prompt = """You are extracting the Lease Deed Document Number from scanned document pages.
@@ -119,22 +110,34 @@ Then select the most frequent valid pair."""
                 "images": images
             }],
             format="json",
+            think=False,
             options={"temperature": 0.0}
         )
-        
-        raw_text = response["message"]["content"]
-        
+
+        raw_text = response.message.content or ""
+        if not raw_text and getattr(response.message, "thinking", None):
+            raw_text = response.message.thinking
+
         if "```json" in raw_text:
             raw_text = raw_text.split("```json")[-1].split("```")[0].strip()    
         elif "```" in raw_text:
             raw_text = raw_text.split("```")[-1].split("```")[0].strip() 
 
-        parsed = json.loads(raw_text)
-        doc_no = parsed.get("lease_doc_no")
+        text = raw_text
+        if "{" in text and "}" in text:
+            text = text[text.find("{"):text.rfind("}") + 1]
+
+        try:
+            parsed = json.loads(text)
+            doc_no = parsed.get("lease_doc_no", "")
+        except Exception:
+            match = re.search(r'"lease_doc_no"\s*:\s*"([^"]*)"', text)
+            doc_no = match.group(1).strip() if match else ""
+
         if doc_no:
             log_llm_interaction(filename, "DNR_EXTRACTION", prompt, raw_text, {"lease_doc_no": doc_no}, "success")
-            return doc_no
+            return str(doc_no).strip()
     except Exception as e:
         log_llm_interaction(filename, "DNR_EXTRACTION", prompt, str(e), {}, "failed")
         
-    return None
+    return ""
